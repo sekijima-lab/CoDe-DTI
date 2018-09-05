@@ -1,0 +1,18 @@
+{
+  "cv_mode": 2,
+  "intmat": "./intmat.npy.gz",
+  "fingerprint": "./fingerprints.txt",
+  "fingerprint_bit": 1024,
+  "max_iter": 200,
+  "n_fold": 5,
+  "parameters":
+    {
+      "alpha": [4],
+      "epoch": [50],
+      "n_latent": [300],
+      "lambda_n": [32],
+      "lambda_w": [0.5],
+      "lambda_v": [4],
+      "lambda_u": [32]
+    }
+}
