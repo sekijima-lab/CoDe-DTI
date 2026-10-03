@@ -1,0 +1,12 @@
+{
+  "reference_commit": "438a2be38c62bc9a6ff4db7e16416fb6d039d2a8",
+  "files": {
+    "intmat.npy.gz": "ba8f300c9eb40d0948540a325c8f02a775c84ce9e49c1c5011792a2ffa2c65e6",
+    "fingerprints.txt": "5c9eef156870c8c9a457b991cd3b1de2a219f98bd4f4dc1ad9da086805145b11",
+    "bremen/autoencoder.py": "43961ebe481012ea42926a95c2be21b2c68b719277badab89cf8bc488285433f",
+    "bremen/cdl.py": "35799608530ebdb9fb0324442d2e89f45e2abd5908e1ad3b0b69f7b64cf4ec0b",
+    "bremen/ctr.py": "d857b167d9e3b93dee28e70926ee38cddf26c04a472162c68ec15a7452664c9b"
+  },
+  "real_subset": "fixtures/indices.json",
+  "workspace_full_array_verdict": "PASS"
+}

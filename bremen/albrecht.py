@@ -2,8 +2,8 @@ from .ctr import CTR
 from .cdl import FingerprintDataset, CDLUpdater
 from .autoencoder import AutoEncoder, WangAutoEncoder
 from . import cross_validation
-from chainer import iterators, training, optimizers
-from chainer.training import extensions
+import torch
+from .cdl import SerialIterator
 from gzip import GzipFile
 
 import numpy as np
@@ -17,6 +17,11 @@ def main():
     import argparse
 
     p = argparse.ArgumentParser()
+    p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--output-dir', default='.')
+    p.add_argument('--n-fold', type=int, default=5)
+    p.add_argument('--n-layer', type=int, default=4)
+    p.add_argument('--encoder', choices=['bremen', 'wang'], default='bremen')
     p.add_argument('--n-latent', type=int, default=50)
     p.add_argument('--fingerprint-bit', type=int, default=1024)
     p.add_argument('interaction_matrix', type=str)
@@ -31,9 +36,17 @@ def main():
     p.add_argument('--result-bank', type=str)
     args = p.parse_args()
 
+    torch.set_num_threads(1)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    os.makedirs(args.output_dir, exist_ok=True)
+    with open(os.path.join(args.output_dir, 'runtime.json'), 'w') as fp:
+        json.dump({'python': sys.version.split()[0], 'torch': str(torch.__version__),
+                   'numpy': np.__version__, 'device': 'cpu', 'threads': 1,
+                   'seed': args.seed, 'compatibility': 'historical CPU sigmoid/RNG/iterator'}, fp, indent=2)
     result = evaluate(args.cv_mode, args.alpha, args.epoch, args.n_latent, args.lambda_n,
                       args.lambda_w, args.lambda_v, args.lambda_u, args.fingerprint_bit,
-                      args.interaction_matrix, args.fingerprint_file)
+                      args.interaction_matrix, args.fingerprint_file, encoder=args.encoder, n_layer=args.n_layer, n_fold=args.n_fold, output_dir=args.output_dir)
 
     if args.result_bank:
         bank = []
@@ -71,10 +84,10 @@ def evaluate(cv_mode, alpha, epoch, n_latent, lambda_n, lambda_w, lambda_v, lamb
     }
 
     if intmat_path.endswith('.npy'):
-        intmat = np.load(intmat_path)
+        intmat = np.load(intmat_path, allow_pickle=False)
     elif intmat_path.endswith('.npy.gz'):
         with GzipFile(intmat_path, 'r') as gf:
-            intmat = np.load(gf)
+            intmat = np.load(gf, allow_pickle=False)
     else:
         intmat = np.loadtxt(intmat_path)
 
@@ -104,19 +117,14 @@ class Albrecht:
     def fit(self, intmat):
         coo = coo_matrix(intmat)
         logs = [(target, drug, data) for target, drug, data in zip(coo.col, coo.row, coo.data)]
-        it = iterators.SerialIterator(self.dataset, 100)
-        opt = optimizers.SGD(0.001)
-        opt.setup(self.encoder)
+        it = SerialIterator(self.dataset, 100)
+        opt = torch.optim.SGD(self.encoder.parameters(), lr=0.001)
         updater = CDLUpdater(self.ctr, self.encoder, logs, it, opt, None, **self.cdl_parameters)
-        trainer = training.Trainer(updater, stop_trigger=(self.stop_epoch, 'epoch'))
-        trainer.extend(extensions.LogReport())
-        trainer.extend(
-            extensions.PrintReport(
-                ['epoch', 'elapsed_time', 'main/loss', 'main/recons_loss', 'main/code_loss', 'main/regularization_loss',
-                 'main/ctr_error'],
-                out=sys.stderr,
-            ))
-        trainer.run()
+        self.training_log = []
+        while it.epoch < self.stop_epoch:
+            metrics = updater.update_core()
+            self.training_log.append(metrics)
+        self.encoder.eval()
 
     def predict(self):
         u = self.ctr.u

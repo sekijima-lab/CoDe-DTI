@@ -1,0 +1,30 @@
+{
+  "init": {
+    "max_abs": 0.0,
+    "key": "0_bremen_init/encode/W"
+  },
+  "forward": {
+    "max_abs": 3.3155083656311035e-07,
+    "key": "73_bremen_train_code"
+  },
+  "loss": {
+    "max_abs": 6.103515625e-05,
+    "key": "0_bremen_train_loss"
+  },
+  "grad": {
+    "max_abs": 8.940696716308594e-07,
+    "key": "0_bremen_train_grad/layer3/linear/W"
+  },
+  "sgd": {
+    "max_abs": 1.4901161193847656e-08,
+    "key": "0_bremen_sgd/layer3/linear/W"
+  },
+  "als": {
+    "max_abs": 0.0,
+    "key": "0_als_u"
+  },
+  "cv": {
+    "max_abs": 0.0,
+    "key": "0_cv1_0"
+  }
+}

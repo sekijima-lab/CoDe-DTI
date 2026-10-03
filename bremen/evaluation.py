@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Set, List
 
-import chainer
+from . import cpu as cpu
 import numpy as np
 
 
@@ -33,8 +33,8 @@ def evaluate(n_users, learn_func, logs, sample_size):
     pms = []
     rms = []
     for u in range(n_users):
-        xp = chainer.cuda.get_array_module(c.u)
-        scores = chainer.cuda.to_cpu(xp.matmul(c.u[u], c.v.T))
+        xp = cpu.get_array_module(c.u)
+        scores = cpu.to_cpu(xp.matmul(c.u[u], c.v.T))
         positives = set(p[0] for p in logs[u]) - train_sets[u]
         precision, recall = precision_recall_m(scores, positives, train_sets[u], [10, 20, 30, 40, 50, 100])
         pms.append(precision)

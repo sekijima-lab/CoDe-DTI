@@ -33,7 +33,7 @@ def main():
         dir_name = 'lambda_%g' % lambda_v
         if os.path.exists(os.path.join(dir_name, 'mean_tpr.npy.gz')):
             with GzipFile(os.path.join(dir_name, 'mean_tpr.npy.gz')) as fp:
-                mean_tpr = np.load(fp)
+                mean_tpr = np.load(fp, allow_pickle=False)
             fpr = np.linspace(0, 1, 10000)
             ax.plot(fpr, mean_tpr, lw=2, label=legend)
             roc_aucs[lambda_v] = auc(fpr, mean_tpr)
@@ -63,10 +63,10 @@ def evaluate(ax, legend, cv_mode, alpha, epoch, n_latent, lambda_n, lambda_w, la
     }
 
     if intmat_path.endswith('.npy'):
-        intmat = np.load(intmat_path)
+        intmat = np.load(intmat_path, allow_pickle=False)
     elif intmat_path.endswith('.npy.gz'):
         with GzipFile(intmat_path, 'r') as gf:
-            intmat = np.load(gf)
+            intmat = np.load(gf, allow_pickle=False)
     else:
         intmat = np.loadtxt(intmat_path)
 

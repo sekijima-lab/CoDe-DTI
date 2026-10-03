@@ -1,83 +1,73 @@
-from typing import Union
-
-import chainer
-import chainer.functions as F
-from chainer import training, reporter
-from chainer.dataset import dataset_mixin
+"""Collaborative deep learning with the original CPU iteration order."""
 import numpy as np
+import torch
 
 
-class FingerprintDataset(dataset_mixin.DatasetMixin):
+class FingerprintDataset:
     def __init__(self, path):
-        self._fingerprints = []
         with open(path) as fp:
-            for line in fp:
-                fp_str = line.strip().split(' ')[1]
-                self._fingerprints.append(np.array(list(map(float, fp_str)), dtype=np.float32))
-
+            self._fingerprints = [np.asarray(list(map(float, line.strip().split(' ')[1])), dtype='f') for line in fp]
+        if not self._fingerprints:
+            raise ValueError('Empty fingerprint dataset')
     def __len__(self):
         return len(self._fingerprints)
-
-    def get_example(self, i):
+    def __getitem__(self, i):
         return i, self._fingerprints[i]
+    get_example = __getitem__
 
 
-class CDLUpdater(training.StandardUpdater):
-    def __init__(self, ctr, encoder, logs, iterator, optimizer, device, **cdl_parameters):
-        super().__init__(iterator, optimizer, device=device)
-        self._dataset = iterator.dataset
-        self.logs = logs
-        self.ctr = ctr
-        self.encoder = encoder
+class SerialIterator:
+    """Preserve original NumPy shuffle and wrap semantics (including short data)."""
+    def __init__(self, dataset, batch_size=100):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.order = np.random.permutation(len(dataset))
+        self.position = self.epoch = 0
+    def next(self):
+        end = self.position + self.batch_size
+        batch = [self.dataset[i] for i in self.order[self.position:end]]
+        new_epoch = end >= len(self.dataset)
+        if new_epoch:
+            rest = end - len(self.dataset)
+            np.random.shuffle(self.order)
+            batch.extend(self.dataset[i] for i in self.order[:rest])
+            self.position = rest
+            self.epoch += 1
+        else:
+            self.position = end
+        return batch, new_epoch
 
-        if cdl_parameters is None:
-            cdl_parameters = {}
 
-        self._lw = cdl_parameters.pop('lambda_w', 1.0)
-        self._lv = cdl_parameters.pop('lambda_v', 1.0)
-        self._ln = cdl_parameters.pop('lambda_n', 4.0)
-
+class CDLUpdater:
+    def __init__(self, ctr, encoder, logs, iterator, optimizer, device=None, **params):
+        if device is not None:
+            raise ValueError('Only CPU is validated')
+        self.ctr, self.encoder, self.logs = ctr, encoder, logs
+        self.iterator, self.optimizer = iterator, optimizer
+        self._lw, self._lv, self._ln = params.get('lambda_w', 1.), params.get('lambda_v', 1.), params.get('lambda_n', 4.)
     def update_theta(self):
-        it = chainer.iterators.SerialIterator(self._dataset, batch_size=50, repeat=False, shuffle=False)
-        for batch in it:
-            batch = self.converter(batch, self.device)
-            batch = (chainer.cuda.to_cpu(batch[0]), batch[1])
-            new_code, _ = self.encoder(chainer.Variable(batch[1], volatile='on'), test=True)
-            self.ctr.theta[batch[0]] = chainer.cuda.to_cpu(new_code.data)
-
+        with torch.no_grad():
+            for start in range(0, len(self.iterator.dataset), 50):
+                batch = [self.iterator.dataset[i] for i in range(start, min(start+50, len(self.iterator.dataset)))]
+                ids, features = zip(*batch)
+                code, _ = self.encoder(np.asarray(features, dtype='f'), test=True)
+                self.ctr.theta[list(ids)] = code.numpy()
     def update_core(self):
-        batch = self.converter(self.get_iterator('main').next(), self.device)  # type: Union[cupy.ndarray, np.ndarray]
-        batch_size = len(batch[1])
-        batch = (chainer.cuda.to_cpu(batch[0]), batch[1])
-        opt = self.get_optimizer('main')  # type: chainer.optimizer.Optimizer
-
-        if self.is_new_epoch:
-            # Update theta, U, V
+        batch, new_epoch = self.iterator.next()
+        ids, features = zip(*batch)
+        x = torch.from_numpy(np.asarray(features, dtype='f'))
+        if new_epoch:
             self.update_theta()
             self.ctr.als(self.logs)
-            err = 0
-            # err = self.ctr.error(self.logs)
-            reporter.report({'ctr_error': err}, opt.target)
-
-        # Update theta
-        code, recons = self.encoder(batch[1])
-        recons_loss = F.sum(F.square(batch[1] - recons))/batch_size
-        if self.device is None:
-            code_loss = F.sum(F.square(code - self.ctr.v[batch[0]]))/batch_size
-        else:
-            code_loss = F.sum(F.square(code - chainer.cuda.to_gpu(self.ctr.v[batch[0]], device=self.device)))/batch_size
+        code, recons = self.encoder(x)
+        recons_loss = (x - recons).square().sum() / len(batch)
+        code_loss = (code - torch.from_numpy(self.ctr.v[list(ids)])).square().sum() / len(batch)
         regularization = self.encoder.w_loss()
+        loss = self._ln * recons_loss + self._lw * regularization
         if self._lv != 0:
-            loss = self._lv * code_loss + self._ln * recons_loss + self._lw * regularization  # type: chainer.Variable
-        else:
-            loss = self._ln * recons_loss + self._lw * regularization  # type: chainer.Variable
-        reporter.report({
-            'loss': loss,
-            'recons_loss': recons_loss,
-            'code_loss': code_loss,
-            'regularization_loss': regularization,
-        }, opt.target)
-
-        opt.target.cleargrads()
+            # Preserve the original addition order.
+            loss = self._lv * code_loss + self._ln * recons_loss + self._lw * regularization
+        self.optimizer.zero_grad()
         loss.backward()
-        opt.update()
+        self.optimizer.step()
+        return {name: float(value.detach()) for name, value in dict(loss=loss, recons_loss=recons_loss,code_loss=code_loss,regularization_loss=regularization).items()}

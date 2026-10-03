@@ -4,25 +4,30 @@ import sys
 from multiprocessing import Process, Queue
 
 from bremen.albrecht import evaluate
-from parameter_search.bayes import BayesianOptimizer
 
-q = Queue()
 debug = False
 
 
-def _child(*args, **kwargs):
+def _child(queue, *args, **kwargs):
     result = evaluate(*args, **kwargs)
-    q.put(result)
+    queue.put(result)
 
 
 def eval_(*args, **kwargs):
-    p = Process(target=_child, args=args, kwargs=kwargs)
     if debug:
-        p.run()
-    else:
-        p.start()
-    p.join()
-    return q.get(timeout=5)
+        return evaluate(*args, **kwargs)
+    # Pass the queue explicitly: macOS uses spawn, so globals are not shared.
+    queue = Queue()
+    process = Process(target=_child, args=(queue,) + args, kwargs=kwargs)
+    process.start()
+    process.join()
+    if process.exitcode:
+        queue.close()
+        raise RuntimeError(f'CoDe-DTI evaluation child exited with {process.exitcode}')
+    try:
+        return queue.get(timeout=5)
+    finally:
+        queue.close()
 
 
 def main():
@@ -52,23 +57,7 @@ def main():
 
 
 def gp_search(cv_mode, intmat, fingerprint, fingerprint_bit, parameters, n_fold, max_iter, output_dir):
-    bo = BayesianOptimizer(parameters)
-    results = []
-    for i, param in enumerate(bo.supply_next_param(max_iter)):
-        output_dir_ = os.path.join(output_dir, 'iter_%d' % i)
-        os.makedirs(output_dir_, 0o755, exist_ok=True)
-        with open(os.path.join(output_dir_, 'param.json'), 'w')as fp:
-            json.dump(param, fp, indent=2)
-        result = eval_(cv_mode=cv_mode, intmat_path=intmat,
-                       fingerprint_bit=fingerprint_bit, fingerprint_path=fingerprint,
-                       n_fold=n_fold, output_dir=output_dir_, **param)
-        print('param:', param, 'result:', result)
-        param['result'] = result
-        results.append(param)
-        bo.report(result['avg_roc_auc'])
-
-        with open(os.path.join(output_dir, 'result_dump.json'), 'w') as fp:
-            json.dump(results, fp)
+    raise NotImplementedError('The historical repository does not include parameter_search.bayes; use method=random')
 
 
 def random_search(cv_mode, intmat, fingerprint, fingerprint_bit, parameters, n_fold, max_iter, output_dir):

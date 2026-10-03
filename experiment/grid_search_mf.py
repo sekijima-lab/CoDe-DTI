@@ -47,10 +47,10 @@ def evaluate(cv_mode, alpha, epoch, n_latent, lambda_v, lambda_u, intmat_path, n
     }
 
     if intmat_path.endswith('.npy'):
-        intmat = np.load(intmat_path)
+        intmat = np.load(intmat_path, allow_pickle=False)
     elif intmat_path.endswith('.npy.gz'):
         with GzipFile(intmat_path, 'r') as gf:
-            intmat = np.load(gf)
+            intmat = np.load(gf, allow_pickle=False)
     else:
         intmat = np.loadtxt(intmat_path)
 

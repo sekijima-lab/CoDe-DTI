@@ -1,11 +1,9 @@
 import numpy as np
-import chainer.cuda
+from . import cpu as cpu
 from typing import Dict, Iterable, Tuple, Union, List
 from collections import defaultdict
 from scipy.sparse import coo_matrix
 from . import opt
-if chainer.cuda.available:
-    import cupy
 
 
 class NaiveMF:
@@ -50,11 +48,12 @@ class NaiveMF:
 
     def save_npz(self, filename: str):
         np.savez_compressed(filename,
-                            v=chainer.cuda.to_cpu(self._V),
-                            u=chainer.cuda.to_cpu(self._U))
+                            v=cpu.to_cpu(self._V),
+                            u=cpu.to_cpu(self._U))
 
     def load_npz(self, filename: str):
-        data = np.load(filename)
+        with np.load(filename, allow_pickle=False) as archive:
+            data = {key: archive[key].copy() for key in archive.files}
         self._V = data['v']
         self._U = data['u']
 
@@ -76,7 +75,7 @@ class NaiveMF:
         return np.mean(err)
 
     def _update(self, x, y, lambda_eye, logs: Dict[int, List[Tuple[int, int]]]):
-        xp = chainer.cuda.get_array_module(x)  # type: Union[np, cupy]
+        xp = cpu.get_array_module(x)  # NumPy CPU backend
         YtY = xp.matmul(y.T, y)
         YtY_tmp = xp.empty_like(YtY, np.float32)
         # YtY_delta = xp.empty_like(YtY, np.float32)
@@ -94,13 +93,13 @@ class NaiveMF:
                 yj = y[y_idx]
 
                 # calc transpose(Y)CY
-                yj.shape = (1, yj.size)
+                yj = yj.reshape(1, -1)
                 YtY_delta = xp.matmul(yj.T, yj)
                 xp.multiply(self._alpha * r, YtY_delta, YtY_delta)
                 xp.add(YtY_tmp, YtY_delta, YtY_tmp)
 
                 # calc transpose(Y)CP
-                yj.shape = (yj.size,)
+                yj = yj.reshape(-1)
                 xp.multiply(1.0 + self._alpha * r, yj, YCP_delta)
                 xp.add(YCP, YCP_delta, YCP)
 

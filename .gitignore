@@ -103,3 +103,8 @@ ENV/
 *_admat_dgc.txt
 run.bash
 parameter_search/bayes.py
+
+# Maintained CPU runtime
+!.python-version
+validation/cli-output/
+result/

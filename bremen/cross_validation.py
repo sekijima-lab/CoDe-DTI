@@ -81,7 +81,7 @@ class CrossValidation:
         try:
             # plt.plot(percentile_masked, predicted_tests_masked, 'x')
             plt.hist([predicted_tests_masked, predicted_tests_negatives],
-                     normed=True, bins=30, color=['blue', 'red'], label=['Positives', 'Negatives'])
+                     density=True, bins=30, color=['blue', 'red'], label=['Positives', 'Negatives'])
             plt.savefig(os.path.join(self.output_dir, 'probability_distribution_fold_%d.eps' % fold))
         except:
             pass

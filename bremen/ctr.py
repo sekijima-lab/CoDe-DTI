@@ -1,26 +1,19 @@
 import numpy as np
-import chainer.cuda
+from . import cpu as cpu
 from typing import Dict, Iterable, Tuple, Union, List
 from collections import defaultdict
 from . import opt
-if chainer.cuda.available:
-    import cupy
 
 
 class CTR:
     def __init__(self, n_latent, n_user, n_item, device=None, **params):
+        if device is not None:
+            raise ValueError("Only CPU is validated in the modern runtime")
         self._device = device
-        if device is None:
-            xp = np
-            self._U = xp.random.randn(n_user, n_latent).astype('f')
-            self._V = xp.random.randn(n_item, n_latent).astype('f')
-            self._theta = xp.random.randn(n_item, n_latent).astype('f')
-        else:
-            # TODO: cupy.cuda.device
-            xp = cupy
-            self._U = xp.random.randn(n_user, n_latent, dtype=np.float32)
-            self._V = xp.random.randn(n_item, n_latent, dtype=np.float32)
-            self._theta = xp.random.randn(n_item, n_latent, dtype=np.float32)
+        xp = np
+        self._U = xp.random.randn(n_user, n_latent).astype('f')
+        self._V = xp.random.randn(n_item, n_latent).astype('f')
+        self._theta = xp.random.randn(n_item, n_latent).astype('f')
         self._n_latent = n_latent
 
         self._lu = params.pop('lambda_u', 1.0)
@@ -62,12 +55,13 @@ class CTR:
 
     def save_npz(self, filename: str):
         np.savez_compressed(filename,
-                            v=chainer.cuda.to_cpu(self._V),
-                            u=chainer.cuda.to_cpu(self._U),
-                            theta=chainer.cuda.to_cpu(self._theta))
+                            v=cpu.to_cpu(self._V),
+                            u=cpu.to_cpu(self._U),
+                            theta=cpu.to_cpu(self._theta))
 
     def load_npz(self, filename: str):
-        data = np.load(filename)
+        with np.load(filename, allow_pickle=False) as archive:
+            data = {key: archive[key].copy() for key in archive.files}
         self._V = data['v']
         self._U = data['u']
         self._theta = data['theta']
@@ -90,7 +84,7 @@ class CTR:
         return np.mean(err)
 
     def _update(self, x, y, lambda_eye, logs: Dict[int, List[Tuple[int, int]]], theta=None):
-        xp = chainer.cuda.get_array_module(x)  # type: Union[np, cupy]
+        xp = cpu.get_array_module(x)  # NumPy CPU backend
         YtY = xp.matmul(y.T, y)
         YtY_tmp = xp.empty_like(YtY, np.float32)
         # YtY_delta = xp.empty_like(YtY, np.float32)
@@ -111,13 +105,13 @@ class CTR:
                 yj = y[y_idx]
 
                 # calc transpose(Y)CY
-                yj.shape = (1, yj.size)
+                yj = yj.reshape(1, -1)
                 YtY_delta = xp.matmul(yj.T, yj)
                 xp.multiply(self._alpha * r, YtY_delta, YtY_delta)
                 xp.add(YtY_tmp, YtY_delta, YtY_tmp)
 
                 # calc transpose(Y)CP
-                yj.shape = (yj.size,)
+                yj = yj.reshape(-1)
                 xp.multiply(1.0 + self._alpha * r, yj, YCP_delta)
                 xp.add(YCP, YCP_delta, YCP)
 

@@ -1,0 +1,19 @@
+{
+  "frozen_before_comparison": true,
+  "device": "cpu",
+  "dtype": "float32",
+  "seeds": [
+    0,
+    19,
+    73
+  ],
+  "preprocessing": "exact",
+  "cv_divisions": "exact",
+  "forward_max_abs": 1e-05,
+  "loss_max_abs": 0.0001,
+  "gradient_max_abs": 0.0001,
+  "sgd_weights_max_abs": 0.0001,
+  "als_weights_max_abs": 0.0001,
+  "prediction_max_abs": 0.0001,
+  "scope": "same weights, fixed inputs and shared explicit dropout masks; CPU reconstructed original reference"
+}

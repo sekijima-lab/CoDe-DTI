@@ -1,0 +1,22 @@
+{
+  "theta": {
+    "max_abs": 0.009285837411880493,
+    "key": "0_bremen_theta"
+  },
+  "u": {
+    "max_abs": 9.298324584960938e-06,
+    "key": "73_wang_u"
+  },
+  "v": {
+    "max_abs": 0.005988717079162598,
+    "key": "19_bremen_v"
+  },
+  "predict": {
+    "max_abs": 0.002584170550107956,
+    "key": "19_bremen_predict"
+  },
+  "encoder_weights": {
+    "max_abs": 0.0015913653187453747,
+    "key": "0_bremen_/layer3/linear/b"
+  }
+}

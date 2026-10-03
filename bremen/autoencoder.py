@@ -1,87 +1,72 @@
-import chainer
-import chainer.functions as F
-import chainer.links as L
+"""CPU autoencoders preserving the original architecture and NumPy RNG."""
+import math
+import numpy as np
+import torch
+from torch import nn
 
 
-class DropConvolution(chainer.Chain):
-    def __init__(self, drop_rate, in_channels, out_channels, ksize, stride=1, pad=0, deconv=False):
-        conv_link = L.Deconvolution2D if deconv else L.Convolution2D
-        super().__init__(
-            conv=conv_link(in_channels, out_channels, ksize, stride, pad),
-        )
-        self._drop_rate = drop_rate
-
-    def __call__(self, x, test=False):
-        return F.dropout(self.conv(x), self._drop_rate, not test)
-
-
-class DL(chainer.Chain):
+class DL(nn.Module):
     def __init__(self, drop_rate, in_dim, out_dim):
-        super().__init__(
-            linear=L.Linear(in_dim, out_dim),
-        )
+        super().__init__()
+        self.W = nn.Parameter(torch.from_numpy(np.random.normal(0, 1 / math.sqrt(in_dim), (out_dim, in_dim)).astype('f')))
+        self.b = nn.Parameter(torch.zeros(out_dim))
         self._drop_rate = drop_rate
 
-    def __call__(self, x, test=False):
-        return F.dropout(self.linear(x), self._drop_rate, not test)
+    def forward(self, x, test=False):
+        # Separate bias addition, as in Chainer's original linear function.
+        y = torch.matmul(x, self.W.T) + self.b
+        # Even ratio zero consumes RNG in Chainer 1.24.
+        if not test:
+            mask = (np.random.rand(*y.shape) >= self._drop_rate).astype('f') / (1 - self._drop_rate)
+            y = y * torch.from_numpy(mask)
+        return y
 
 
-class AutoEncoder(chainer.Chain):
-    def __init__(self, fp_dim, n_latent=128, n_layer=4):
+class AutoEncoder(nn.Module):
+    def __init__(self, fp_dim, n_latent=128, n_layer=4, _wang=False):
         super().__init__()
-        drop_rate = 0.5
+        if n_layer < 2 or n_layer % 2:
+            raise ValueError('n_layer must be positive and even (at least 2)')
         self.n_layer = n_layer
-        output_dims = [fp_dim]
-        self.layers = []
+        self._wang = _wang
+        self.layers = nn.ModuleList()
+        dim = fp_dim
         for l in range(1, n_layer + 1):
-            name = 'layer%d' % l
-            output_dim = fp_dim if l == n_layer else fp_dim//2
-            layer = DL(drop_rate, output_dims[-1], output_dim) if l != n_layer else DL(0, output_dims[-1], output_dim)
-            self.layers.append(layer)
-            self.add_link(name, layer)
-            output_dims.append(output_dim)
+            out_dim = (n_latent if l == n_layer // 2 else (fp_dim if l == n_layer else 200)) if _wang else (fp_dim if l == n_layer else fp_dim // 2)
+            self.layers.append(DL(0 if l == n_layer else .5, dim, out_dim))
+            dim = out_dim
+        if not _wang:
+            self.encode = DL(0, fp_dim // 2, n_latent)
 
-        self.add_link('encode', L.Linear(fp_dim//2, n_latent))
-
-    def __call__(self, x, test=False):
+    def forward(self, x, test=False):
+        if not isinstance(x, torch.Tensor):
+            x = torch.as_tensor(x, dtype=torch.float32)
+        if x.device.type != 'cpu' or x.dtype != torch.float32:
+            raise ValueError('Only CPU float32 is validated')
         outputs = [x]
-        for l, layer in enumerate(self.layers, start=1):
-            act_func = F.sigmoid if l == self.n_layer else F.relu
-            outputs.append(act_func(layer(outputs[-1], test)))
-        return self.encode(outputs[len(outputs)//2]), outputs[-1]
+        for i, layer in enumerate(self.layers, 1):
+            y = layer(outputs[-1], test)
+            # Chainer 1.24 CPU sigmoid uses tanh, rather than exp.
+            outputs.append(torch.tanh(y * .5) * .5 + .5 if self._wang or i == self.n_layer else torch.relu(y))
+        code = outputs[len(outputs) // 2]
+        return (code if self._wang else self.encode(code, test=True)), outputs[-1]
 
+    def named_legacy_parameters(self):
+        values = []
+        for i, layer in enumerate(self.layers, 1):
+            values.extend([(f'/layer{i}/linear/W', layer.W), (f'/layer{i}/linear/b', layer.b)])
+        if not self._wang:
+            values.extend([('/encode/W', self.encode.W), ('/encode/b', self.encode.b)])
+        return sorted(values)
 
     def w_loss(self):
-        xp = chainer.cuda.get_array_module(self.layers[0].linear.W.data)
-        loss = chainer.Variable(xp.zeros(()).astype('f'))
-        for p in self.params():
-            loss += F.sum(F.square(p))
+        loss = torch.zeros((), dtype=torch.float32)
+        for layer in list(self.layers) + ([] if self._wang else [self.encode]):
+            loss = loss + torch.sum(layer.W.square())
+            loss = loss + torch.sum(layer.b.square())
         return loss
 
 
-class WangAutoEncoder(chainer.Chain):
+class WangAutoEncoder(AutoEncoder):
     def __init__(self, fp_dim, n_latent, n_layer=4):
-        super().__init__()
-        drop_rate = 0.5
-        output_dims = [fp_dim]
-        self.layers = []
-        for l in range(1, n_layer + 1):
-            name = 'layer%d' % l
-            output_dim = n_latent if l == n_layer//2 else (fp_dim if l == n_layer else 200)
-            layer = DL(drop_rate, output_dims[-1], output_dim) if l != n_layer else DL(0, output_dims[-1], output_dim)
-            self.layers.append(layer)
-            self.add_link(name, layer)
-            output_dims.append(output_dim)
-
-    def __call__(self, x, test=False):
-        outputs = [x]
-        for layer in self.layers:
-            outputs.append(F.sigmoid(layer(outputs[-1], test)))
-        return outputs[len(outputs)//2], outputs[-1]
-
-    def w_loss(self):
-        xp = chainer.cuda.get_array_module(self.layers[0].linear.W.data)
-        loss = chainer.Variable(xp.zeros(()).astype('f'))
-        for p in self.params():
-            loss += F.sum(F.square(p))
-        return loss
+        super().__init__(fp_dim, n_latent, n_layer, _wang=True)
